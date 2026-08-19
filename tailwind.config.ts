@@ -13,7 +13,17 @@ export default {
       },
     },
     extend: {
+      fontFamily: {
+        display: ["Manrope", "sans-serif"],
+      },
       colors: {
+        wayfare: {
+          ink: "#1b2735",
+          teal: "#1b7f73",
+          mint: "#dff3eb",
+          orange: "#f59b4a",
+          sand: "#f7f3ec",
+        },
         border: "hsl(var(--border))",
         input: "hsl(var(--input))",
         ring: "hsl(var(--ring))",
