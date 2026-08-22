@@ -55,7 +55,7 @@ export const searchTrips: RequestHandler = async (req, res) => {
 export const publishTrip: RequestHandler = async (req, res) => {
   const parsed = publishSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: "Enter valid trip, vehicle, seat, and fare details." });
-  const accessToken = req.headers.authorization?.replace(/^Bearer\\s+/i, "");
+  const accessToken = req.headers.authorization?.replace(/^Bearer\s+/i, "");
   const supabase = getSupabase();
   if (!supabase) return res.status(503).json({ error: "Supabase is not configured." });
   if (!accessToken) return res.status(401).json({ error: "Sign in before publishing a trip." });
