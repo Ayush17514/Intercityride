@@ -25,7 +25,7 @@ export function AuthDialog({ open, onClose }: Props) {
     }
     const result = mode === "login"
       ? await supabase.auth.signInWithPassword({ email, password })
-      : await supabase.auth.signUp({ email, password, options: { data: { full_name: name } } });
+      : await supabase.auth.signUp({ email, password, options: { data: { full_name: name }, emailRedirectTo: window.location.origin } });
     setBusy(false);
     if (result.error) return setMessage(result.error.message);
     setMessage(mode === "login" ? "You are signed in." : "Account created. Check your email to confirm your account.");
