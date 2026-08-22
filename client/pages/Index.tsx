@@ -14,12 +14,15 @@ import {
   Sparkles,
   Star,
   Users,
+  UserCircle,
+  LogOut,
   WalletCards,
   X,
 } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { AuthDialog } from "@/components/AuthDialog";
 import { PublishTripDialog } from "@/components/PublishTripDialog";
+import { supabase } from "@/lib/supabase";
 
 const trips = [
   {
@@ -68,6 +71,19 @@ export default function Index() {
   const [searchError, setSearchError] = useState("");
   const [authOpen, setAuthOpen] = useState(false);
   const [publishOpen, setPublishOpen] = useState(false);
+  const [userEmail, setUserEmail] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!supabase) return;
+    supabase.auth.getSession().then(({ data }) => setUserEmail(data.session?.user.email ?? null));
+    const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => setUserEmail(session?.user.email ?? null));
+    return () => listener.subscription.unsubscribe();
+  }, []);
+
+  const handleLogout = async () => {
+    await supabase?.auth.signOut();
+    setUserEmail(null);
+  };
 
   const scrollToSearch = () => document.getElementById("search")?.scrollIntoView({ behavior: "smooth" });
   const handleSearch = async () => {
@@ -106,8 +122,7 @@ export default function Index() {
           <a href="#how-it-works" className="transition hover:text-wayfare-teal">How it works</a>
         </nav>
         <div className="hidden items-center gap-4 md:flex">
-          <button onClick={() => setAuthOpen(true)} className="text-sm font-semibold text-slate-600">Log in</button>
-          <button onClick={() => { setActiveTab("going"); setAuthOpen(true); }} className="rounded-full bg-wayfare-ink px-5 py-2.5 text-sm font-bold text-white transition hover:bg-wayfare-teal">Get started</button>
+          {userEmail ? <div className="flex items-center gap-3"><div className="hidden items-center gap-2 text-sm font-semibold text-slate-600 lg:flex"><UserCircle size={19} className="text-wayfare-teal" /> {userEmail.split("@")[0]}</div><button onClick={handleLogout} className="flex items-center gap-1.5 text-sm font-semibold text-slate-600 hover:text-wayfare-teal"><LogOut size={16} /> Log out</button></div> : <><button onClick={() => setAuthOpen(true)} className="text-sm font-semibold text-slate-600">Log in</button><button onClick={() => setAuthOpen(true)} className="rounded-full bg-wayfare-ink px-5 py-2.5 text-sm font-bold text-white transition hover:bg-wayfare-teal">Get started</button></>}
         </div>
         <button className="rounded-lg p-2 md:hidden" onClick={() => setMobileMenu(!mobileMenu)} aria-label="Toggle menu">{mobileMenu ? <X /> : <Menu />}</button>
         {mobileMenu && <div className="absolute left-5 right-5 top-16 rounded-2xl border border-wayfare-ink/10 bg-white p-4 shadow-xl md:hidden"><button onClick={scrollToSearch} className="block w-full rounded-xl px-4 py-3 text-left font-semibold">Find a ride</button><button onClick={() => setActiveTab("going")} className="block w-full rounded-xl px-4 py-3 text-left font-semibold">Offer a ride</button></div>}
@@ -120,7 +135,7 @@ export default function Index() {
             <div className="mb-7 inline-flex items-center gap-2 rounded-full border border-wayfare-teal/15 bg-white/70 px-3.5 py-2 text-xs font-bold uppercase tracking-[0.12em] text-wayfare-teal shadow-sm"><Sparkles size={14} className="text-wayfare-orange" /> Travel smarter, together</div>
             <h1 className="max-w-2xl font-display text-[clamp(3.1rem,6vw,5.8rem)] font-extrabold leading-[.98] tracking-[-0.07em]">Go where you're going.<br /><span className="text-wayfare-teal">Pay for the way.</span></h1>
             <p className="mt-7 max-w-lg text-lg leading-8 text-slate-600">Find a seat in a vehicle already headed your way. Lower fares for you, better returns for drivers.</p>
-            <div className="mt-9 flex flex-wrap items-center gap-5"><button onClick={scrollToSearch} className="group flex items-center gap-3 rounded-full bg-wayfare-orange px-6 py-3.5 font-bold text-wayfare-ink shadow-xl shadow-wayfare-orange/25 transition hover:-translate-y-0.5 hover:shadow-wayfare-orange/40">Find my ride <ArrowRight size={18} className="transition group-hover:translate-x-1" /></button><button onClick={() => setActiveTab("going")} className="flex items-center gap-2 font-bold text-wayfare-ink transition hover:text-wayfare-teal"><CarFront size={18} /> I'm going somewhere</button></div>
+            <div className="mt-9 flex flex-wrap items-center gap-5"><button onClick={scrollToSearch} className="group flex items-center gap-3 rounded-full bg-wayfare-orange px-6 py-3.5 font-bold text-wayfare-ink shadow-xl shadow-wayfare-orange/25 transition hover:-translate-y-0.5 hover:shadow-wayfare-orange/40">Find my ride <ArrowRight size={18} className="transition group-hover:translate-x-1" /></button><button onClick={() => { setActiveTab("going"); setPublishOpen(true); }} className="flex items-center gap-2 font-bold text-wayfare-ink transition hover:text-wayfare-teal"><CarFront size={18} /> I'm going somewhere</button></div>
             <div className="mt-12 flex items-center gap-5 text-sm text-slate-500"><div className="flex -space-x-2"><img className="h-8 w-8 rounded-full border-2 border-wayfare-sand object-cover" src="https://images.unsplash.com/photo-1531123897727-8f129e1688ce?w=80&q=80" /><img className="h-8 w-8 rounded-full border-2 border-wayfare-sand object-cover" src="https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=80&q=80" /><img className="h-8 w-8 rounded-full border-2 border-wayfare-sand object-cover" src="https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=80&q=80" /></div><span><strong className="text-wayfare-ink">12,000+</strong> happy travellers</span><span className="hidden h-5 w-px bg-slate-300 sm:block" /><span className="hidden items-center gap-1 sm:flex"><ShieldCheck size={16} className="text-wayfare-teal" /> Verified community</span></div>
           </div>
           <div className="relative min-h-[450px] lg:min-h-[540px]">
