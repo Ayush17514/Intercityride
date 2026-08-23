@@ -1,27 +1,28 @@
 -- Wayfare intercity mobility marketplace
--- Run this file once in Supabase Dashboard > SQL Editor.
+-- Run this file in Supabase Dashboard > SQL Editor.
 
 create extension if not exists "pgcrypto";
 
--- Drop existing types if recreating fresh
--- (Or alter type if executing incrementally)
-do $$ begin
-  create type public.trip_kind as enum ('existing', 'return', 'fresh_request');
-exception when duplicate_object then null; end $$;
+-- Clean drop of existing tables & types to prevent stale enum conflicts
+drop table if exists public.bookings cascade;
+drop table if exists public.route_stops cascade;
+drop table if exists public.trips cascade;
+drop table if exists public.vehicles cascade;
+drop table if exists public.profiles cascade;
 
-do $$ begin
-  create type public.trip_status as enum ('published', 'full', 'in_progress', 'completed', 'cancelled');
-exception when duplicate_object then null; end $$;
+drop type if exists public.trip_kind cascade;
+drop type if exists public.trip_status cascade;
+drop type if exists public.booking_status cascade;
+drop type if exists public.vehicle_type cascade;
 
-do $$ begin
-  create type public.booking_status as enum ('pending', 'confirmed', 'in_progress', 'completed', 'cancelled');
-exception when duplicate_object then null; end $$;
+-- Custom Enum Types
+create type public.trip_kind as enum ('existing', 'return', 'fresh_request');
+create type public.trip_status as enum ('published', 'full', 'in_progress', 'completed', 'cancelled');
+create type public.booking_status as enum ('pending', 'confirmed', 'in_progress', 'completed', 'cancelled');
+create type public.vehicle_type as enum ('sedan', 'suv', 'van', 'tempo_traveller');
 
-do $$ begin
-  create type public.vehicle_type as enum ('sedan', 'suv', 'van', 'tempo_traveller');
-exception when duplicate_object then null; end $$;
-
-create table if not exists public.profiles (
+-- 1. Profiles Table
+create table public.profiles (
   id uuid primary key,
   full_name text not null,
   phone text,
@@ -34,7 +35,8 @@ create table if not exists public.profiles (
   created_at timestamptz not null default now()
 );
 
-create table if not exists public.vehicles (
+-- 2. Vehicles Table
+create table public.vehicles (
   id uuid primary key default gen_random_uuid(),
   driver_id uuid not null references public.profiles(id) on delete cascade,
   make_model text not null,
@@ -45,7 +47,8 @@ create table if not exists public.vehicles (
   created_at timestamptz not null default now()
 );
 
-create table if not exists public.trips (
+-- 3. Trips Table
+create table public.trips (
   id uuid primary key default gen_random_uuid(),
   driver_id uuid not null references public.profiles(id) on delete cascade,
   vehicle_id uuid not null references public.vehicles(id) on delete restrict,
@@ -68,7 +71,8 @@ create table if not exists public.trips (
   constraint available_seats_within_capacity check (available_seats <= total_seats)
 );
 
-create table if not exists public.route_stops (
+-- 4. Route Stops Table
+create table public.route_stops (
   id uuid primary key default gen_random_uuid(),
   trip_id uuid not null references public.trips(id) on delete cascade,
   stop_order integer not null check (stop_order >= 0),
@@ -79,7 +83,8 @@ create table if not exists public.route_stops (
   unique (trip_id, stop_order)
 );
 
-create table if not exists public.bookings (
+-- 5. Bookings Table
+create table public.bookings (
   id uuid primary key default gen_random_uuid(),
   trip_id uuid not null references public.trips(id) on delete restrict,
   passenger_id uuid not null references public.profiles(id) on delete restrict,
@@ -97,11 +102,13 @@ create table if not exists public.bookings (
   unique (trip_id, passenger_id, status)
 );
 
-create index if not exists trips_search_idx on public.trips (origin_city, destination_city, departure_at, status);
-create index if not exists trips_departure_idx on public.trips (departure_at);
-create index if not exists route_stops_city_idx on public.route_stops (city, trip_id);
-create index if not exists bookings_trip_idx on public.bookings (trip_id, status);
+-- Indexes
+create index trips_search_idx on public.trips (origin_city, destination_city, departure_at, status);
+create index trips_departure_idx on public.trips (departure_at);
+create index route_stops_city_idx on public.route_stops (city, trip_id);
+create index bookings_trip_idx on public.bookings (trip_id, status);
 
+-- Trigger for New User Profile creation
 create or replace function public.handle_new_user()
 returns trigger
 language plpgsql
@@ -126,6 +133,7 @@ create trigger on_auth_user_created
 after insert on auth.users
 for each row execute procedure public.handle_new_user();
 
+-- Search Trips Stored Function
 create or replace function public.search_trips(
   requested_origin text,
   requested_destination text,
@@ -187,6 +195,7 @@ as $$
   select * from scored order by match_score desc, price_per_seat asc, departure_at asc;
 $$;
 
+-- Create Booking Stored Function
 create or replace function public.create_booking(
   requested_trip_id uuid,
   requested_seats integer,
@@ -239,6 +248,7 @@ begin
 end;
 $$;
 
+-- Row Level Security (RLS)
 alter table public.profiles enable row level security;
 alter table public.vehicles enable row level security;
 alter table public.trips enable row level security;
@@ -258,7 +268,7 @@ create policy "Passengers view their bookings" on public.bookings for select usi
 create policy "Passengers create bookings" on public.bookings for insert with check (passenger_id = auth.uid());
 create policy "Passengers cancel their bookings" on public.bookings for update using (passenger_id = auth.uid()) with check (passenger_id = auth.uid());
 
--- Demo records for initial testing
+-- Initial Seed Records
 insert into public.profiles (id, full_name, phone, role, city, rating, total_trips, is_verified) values
 ('00000000-0000-0000-0000-000000000001', 'Arjun Mehta', '+91 98765 43210', 'driver', 'Jabalpur', 4.9, 128, true),
 ('00000000-0000-0000-0000-000000000002', 'Nikhil Sharma', '+91 98111 22334', 'driver', 'Jabalpur', 4.8, 86, true),
