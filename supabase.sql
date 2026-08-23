@@ -3,17 +3,30 @@
 
 create extension if not exists "pgcrypto";
 
-create type public.trip_kind as enum ('existing', 'return', 'fresh_request');
-create type public.trip_status as enum ('published', 'full', 'completed', 'cancelled');
-create type public.booking_status as enum ('pending', 'confirmed', 'cancelled');
-create type public.vehicle_type as enum ('sedan', 'suv', 'van', 'tempo_traveller');
+-- Drop existing types if recreating fresh
+-- (Or alter type if executing incrementally)
+do $$ begin
+  create type public.trip_kind as enum ('existing', 'return', 'fresh_request');
+exception when duplicate_object then null; end $$;
 
-create table public.profiles (
+do $$ begin
+  create type public.trip_status as enum ('published', 'full', 'in_progress', 'completed', 'cancelled');
+exception when duplicate_object then null; end $$;
+
+do $$ begin
+  create type public.booking_status as enum ('pending', 'confirmed', 'in_progress', 'completed', 'cancelled');
+exception when duplicate_object then null; end $$;
+
+do $$ begin
+  create type public.vehicle_type as enum ('sedan', 'suv', 'van', 'tempo_traveller');
+exception when duplicate_object then null; end $$;
+
+create table if not exists public.profiles (
   id uuid primary key,
   full_name text not null,
   phone text,
   avatar_url text,
-  role text not null default 'passenger' check (role in ('passenger', 'driver', 'both')),
+  role text not null default 'passenger' check (role in ('passenger', 'driver', 'admin', 'both')),
   city text,
   rating numeric(2,1) not null default 5.0 check (rating between 0 and 5),
   total_trips integer not null default 0 check (total_trips >= 0),
@@ -21,7 +34,7 @@ create table public.profiles (
   created_at timestamptz not null default now()
 );
 
-create table public.vehicles (
+create table if not exists public.vehicles (
   id uuid primary key default gen_random_uuid(),
   driver_id uuid not null references public.profiles(id) on delete cascade,
   make_model text not null,
@@ -32,7 +45,7 @@ create table public.vehicles (
   created_at timestamptz not null default now()
 );
 
-create table public.trips (
+create table if not exists public.trips (
   id uuid primary key default gen_random_uuid(),
   driver_id uuid not null references public.profiles(id) on delete cascade,
   vehicle_id uuid not null references public.vehicles(id) on delete restrict,
@@ -55,7 +68,7 @@ create table public.trips (
   constraint available_seats_within_capacity check (available_seats <= total_seats)
 );
 
-create table public.route_stops (
+create table if not exists public.route_stops (
   id uuid primary key default gen_random_uuid(),
   trip_id uuid not null references public.trips(id) on delete cascade,
   stop_order integer not null check (stop_order >= 0),
@@ -66,23 +79,28 @@ create table public.route_stops (
   unique (trip_id, stop_order)
 );
 
-create table public.bookings (
+create table if not exists public.bookings (
   id uuid primary key default gen_random_uuid(),
   trip_id uuid not null references public.trips(id) on delete restrict,
   passenger_id uuid not null references public.profiles(id) on delete restrict,
   seats integer not null default 1 check (seats between 1 and 8),
   pickup_city text not null,
   dropoff_city text not null,
+  pickup_address text,
+  dropoff_address text,
   total_price numeric(10,2) not null check (total_price >= 0),
-  status public.booking_status not null default 'pending',
+  payment_method text not null default 'upi',
+  payment_status text not null default 'paid',
+  booking_pin text not null default '4821',
+  status public.booking_status not null default 'confirmed',
   created_at timestamptz not null default now(),
   unique (trip_id, passenger_id, status)
 );
 
-create index trips_search_idx on public.trips (origin_city, destination_city, departure_at, status);
-create index trips_departure_idx on public.trips (departure_at);
-create index route_stops_city_idx on public.route_stops (city, trip_id);
-create index bookings_trip_idx on public.bookings (trip_id, status);
+create index if not exists trips_search_idx on public.trips (origin_city, destination_city, departure_at, status);
+create index if not exists trips_departure_idx on public.trips (departure_at);
+create index if not exists route_stops_city_idx on public.route_stops (city, trip_id);
+create index if not exists bookings_trip_idx on public.bookings (trip_id, status);
 
 create or replace function public.handle_new_user()
 returns trigger
@@ -90,12 +108,13 @@ language plpgsql
 security definer set search_path = public
 as $$
 begin
-  insert into public.profiles (id, full_name, phone, avatar_url)
+  insert into public.profiles (id, full_name, phone, avatar_url, role)
   values (
     new.id,
     coalesce(new.raw_user_meta_data ->> 'full_name', split_part(new.email, '@', 1)),
     new.phone,
-    new.raw_user_meta_data ->> 'avatar_url'
+    new.raw_user_meta_data ->> 'avatar_url',
+    coalesce(new.raw_user_meta_data ->> 'role', 'passenger')
   )
   on conflict (id) do nothing;
   return new;
@@ -110,7 +129,7 @@ for each row execute procedure public.handle_new_user();
 create or replace function public.search_trips(
   requested_origin text,
   requested_destination text,
-  requested_departure date,
+  requested_departure date default null,
   requested_seats integer default 1
 )
 returns table (
@@ -153,16 +172,17 @@ as $$
     from public.trips t
     join public.profiles p on p.id = t.driver_id
     join public.vehicles v on v.id = t.vehicle_id
-    where t.status = 'published'
+    where t.status in ('published', 'full')
       and t.available_seats >= requested_seats
-      and t.departure_at::date = requested_departure
-      and (lower(t.origin_city) = lower(requested_origin)
-        or lower(t.destination_city) = lower(requested_destination)
-        or exists (
-          select 1 from public.route_stops rs
-          where rs.trip_id = t.id
-            and lower(rs.city) in (lower(requested_origin), lower(requested_destination))
-        ))
+      and (requested_departure is null or t.departure_at::date = requested_departure)
+      and (
+        requested_origin is null or lower(t.origin_city) like '%' || lower(requested_origin) || '%'
+        or exists (select 1 from public.route_stops rs where rs.trip_id = t.id and lower(rs.city) like '%' || lower(requested_origin) || '%')
+      )
+      and (
+        requested_destination is null or lower(t.destination_city) like '%' || lower(requested_destination) || '%'
+        or exists (select 1 from public.route_stops rs where rs.trip_id = t.id and lower(rs.city) like '%' || lower(requested_destination) || '%')
+      )
   )
   select * from scored order by match_score desc, price_per_seat asc, departure_at asc;
 $$;
@@ -171,7 +191,10 @@ create or replace function public.create_booking(
   requested_trip_id uuid,
   requested_seats integer,
   requested_pickup text,
-  requested_dropoff text
+  requested_dropoff text,
+  requested_pickup_address text default null,
+  requested_dropoff_address text default null,
+  requested_payment_method text default 'upi'
 )
 returns public.bookings
 language plpgsql
@@ -182,17 +205,36 @@ declare
   current_trip public.trips;
   new_booking public.bookings;
   auth_passenger uuid := auth.uid();
+  generated_pin text := lpad(floor(random() * 9000 + 1000)::text, 4, '0');
 begin
   if auth_passenger is null then raise exception 'Authentication required'; end if;
   select * into current_trip from public.trips where id = requested_trip_id for update;
   if current_trip.id is null then raise exception 'Trip not found'; end if;
   if current_trip.available_seats < requested_seats then raise exception 'Not enough seats available'; end if;
-  insert into public.bookings (trip_id, passenger_id, seats, pickup_city, dropoff_city, total_price, status)
-  values (requested_trip_id, auth_passenger, requested_seats, requested_pickup, requested_dropoff, current_trip.price_per_seat * requested_seats, 'confirmed')
+
+  insert into public.bookings (
+    trip_id, passenger_id, seats, pickup_city, dropoff_city,
+    pickup_address, dropoff_address, total_price, payment_method,
+    payment_status, booking_pin, status
+  )
+  values (
+    requested_trip_id, auth_passenger, requested_seats, requested_pickup, requested_dropoff,
+    coalesce(requested_pickup_address, requested_pickup || ' Central Point'),
+    coalesce(requested_dropoff_address, requested_dropoff || ' City Center'),
+    current_trip.price_per_seat * requested_seats,
+    requested_payment_method,
+    'paid',
+    generated_pin,
+    'confirmed'
+  )
   returning * into new_booking;
+
   update public.trips set available_seats = available_seats - requested_seats,
     status = case when available_seats - requested_seats = 0 then 'full' else status end
     where id = requested_trip_id;
+
+  update public.profiles set total_trips = total_trips + 1 where id = auth_passenger;
+
   return new_booking;
 end;
 $$;
@@ -207,7 +249,7 @@ create policy "Public can view verified profiles" on public.profiles for select 
 create policy "Users can update their profile" on public.profiles for update using (id = auth.uid()) with check (id = auth.uid());
 create policy "Anyone can view verified vehicles" on public.vehicles for select using (is_verified = true or driver_id = auth.uid());
 create policy "Drivers manage their vehicles" on public.vehicles for all using (driver_id = auth.uid()) with check (driver_id = auth.uid());
-create policy "Anyone can view published trips" on public.trips for select using (status in ('published', 'full') or driver_id = auth.uid());
+create policy "Anyone can view published trips" on public.trips for select using (status in ('published', 'full', 'in_progress') or driver_id = auth.uid());
 create policy "Drivers create trips" on public.trips for insert with check (driver_id = auth.uid());
 create policy "Drivers update their trips" on public.trips for update using (driver_id = auth.uid()) with check (driver_id = auth.uid());
 create policy "Anyone can view route stops" on public.route_stops for select using (true);
@@ -216,11 +258,12 @@ create policy "Passengers view their bookings" on public.bookings for select usi
 create policy "Passengers create bookings" on public.bookings for insert with check (passenger_id = auth.uid());
 create policy "Passengers cancel their bookings" on public.bookings for update using (passenger_id = auth.uid()) with check (passenger_id = auth.uid());
 
--- Demo records. These profiles are intentionally standalone so the UI works before sign-up.
+-- Demo records for initial testing
 insert into public.profiles (id, full_name, phone, role, city, rating, total_trips, is_verified) values
 ('00000000-0000-0000-0000-000000000001', 'Arjun Mehta', '+91 98765 43210', 'driver', 'Jabalpur', 4.9, 128, true),
 ('00000000-0000-0000-0000-000000000002', 'Nikhil Sharma', '+91 98111 22334', 'driver', 'Jabalpur', 4.8, 86, true),
-('00000000-0000-0000-0000-000000000003', 'Priya Kapoor', null, 'passenger', 'Jaipur', 5.0, 4, true)
+('00000000-0000-0000-0000-000000000003', 'Priya Kapoor', '+91 98222 11334', 'passenger', 'Jaipur', 5.0, 4, true),
+('00000000-0000-0000-0000-000000000099', 'Admin Control', '+91 99999 00000', 'admin', 'New Delhi', 5.0, 0, true)
 on conflict (id) do nothing;
 
 insert into public.vehicles (id, driver_id, make_model, vehicle_type, registration_number, seat_capacity, is_verified) values
@@ -229,8 +272,8 @@ insert into public.vehicles (id, driver_id, make_model, vehicle_type, registrati
 on conflict (id) do nothing;
 
 insert into public.trips (id, driver_id, vehicle_id, kind, origin_city, destination_city, origin_lat, origin_lng, destination_lat, destination_lng, departure_at, return_at, total_seats, available_seats, price_per_seat, estimated_duration_minutes, notes) values
-('20000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000000001', '10000000-0000-0000-0000-000000000001', 'return', 'Jabalpur', 'Jaipur', 23.1815, 79.9864, 26.9124, 75.7873, '2025-08-12 07:00:00+05:30', '2025-08-15 08:00:00+05:30', 4, 3, 1249, 630, 'Returning from Jaipur after a three-day stay.'),
-('20000000-0000-0000-0000-000000000002', '00000000-0000-0000-0000-000000000002', '10000000-0000-0000-0000-000000000002', 'existing', 'Jabalpur', 'Jaipur', 23.1815, 79.9864, 26.9124, 75.7873, '2025-08-12 21:30:00+05:30', null, 4, 2, 1680, 585, 'Direct overnight trip with one scheduled rest stop.')
+('20000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000000001', '10000000-0000-0000-0000-000000000001', 'return', 'Jabalpur', 'Jaipur', 23.1815, 79.9864, 26.9124, 75.7873, now() + interval '1 day 7 hours', now() + interval '4 days', 4, 3, 1249, 630, 'Returning from Jaipur. Clean AC vehicle.'),
+('20000000-0000-0000-0000-000000000002', '00000000-0000-0000-0000-000000000002', '10000000-0000-0000-0000-000000000002', 'existing', 'Jabalpur', 'Jaipur', 23.1815, 79.9864, 26.9124, 75.7873, now() + interval '1 day 21 hours 30 mins', null, 4, 2, 1680, 585, 'Direct overnight trip via expressway.')
 on conflict (id) do nothing;
 
 insert into public.route_stops (trip_id, stop_order, city, latitude, longitude, arrival_offset_minutes) values
@@ -242,9 +285,3 @@ insert into public.route_stops (trip_id, stop_order, city, latitude, longitude, 
 ('20000000-0000-0000-0000-000000000002', 1, 'Sagar', 23.8388, 78.7378, 150),
 ('20000000-0000-0000-0000-000000000002', 2, 'Jaipur', 26.9124, 75.7873, 585)
 on conflict (trip_id, stop_order) do nothing;
-
--- Example client environment values (never expose the service role key in the browser):
--- VITE_SUPABASE_URL=https://<project-ref>.supabase.co
--- VITE_SUPABASE_ANON_KEY=<publishable-anon-key>
--- SUPABASE_URL=https://<project-ref>.supabase.co
--- SUPABASE_SERVICE_ROLE_KEY=<server-only-secret>
