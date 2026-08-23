@@ -1,4 +1,4 @@
--- Wayfare intercity mobility marketplace
+-- Wayfare Intercity Mobility Marketplace
 -- Run this file in Supabase Dashboard > SQL Editor.
 
 create extension if not exists "pgcrypto";
@@ -21,17 +21,18 @@ create type public.trip_status as enum ('published', 'full', 'in_progress', 'com
 create type public.booking_status as enum ('pending', 'confirmed', 'in_progress', 'completed', 'cancelled');
 create type public.vehicle_type as enum ('sedan', 'suv', 'van', 'tempo_traveller');
 
--- 1. Profiles Table
+-- 1. Profiles Table (Supports Customer, Driver, and Admin)
 create table public.profiles (
-  id uuid primary key,
+  id uuid primary key references auth.users(id) on delete cascade,
   full_name text not null,
-  phone text,
+  phone text not null,
   avatar_url text,
   role text not null default 'passenger' check (role in ('passenger', 'driver', 'admin', 'both')),
-  city text,
+  city text not null,
+  national_id text, -- Driving License / National ID Proof for Driver verification
   rating numeric(2,1) not null default 5.0 check (rating between 0 and 5),
   total_trips integer not null default 0 check (total_trips >= 0),
-  is_verified boolean not null default false,
+  is_verified boolean not null default false, -- Customers are auto-verified; Drivers require Admin approval
   created_at timestamptz not null default now()
 );
 
@@ -41,9 +42,9 @@ create table public.vehicles (
   driver_id uuid not null references public.profiles(id) on delete cascade,
   make_model text not null,
   vehicle_type public.vehicle_type not null,
-  registration_number text,
+  registration_number text not null,
   seat_capacity integer not null check (seat_capacity between 1 and 20),
-  is_verified boolean not null default false,
+  is_verified boolean not null default false, -- Requires Admin document check
   created_at timestamptz not null default now()
 );
 
@@ -102,28 +103,57 @@ create table public.bookings (
   unique (trip_id, passenger_id, status)
 );
 
--- Indexes
+-- Indexes for lightning-fast search
 create index trips_search_idx on public.trips (origin_city, destination_city, departure_at, status);
 create index trips_departure_idx on public.trips (departure_at);
 create index route_stops_city_idx on public.route_stops (city, trip_id);
 create index bookings_trip_idx on public.bookings (trip_id, status);
 
--- Trigger for New User Profile creation
+-- Trigger for New Supabase User Profile Creation
 create or replace function public.handle_new_user()
 returns trigger
 language plpgsql
 security definer set search_path = public
 as $$
+declare
+  user_role text := coalesce(new.raw_user_meta_data ->> 'role', 'passenger');
+  user_city text := coalesce(new.raw_user_meta_data ->> 'city', 'Jabalpur');
+  user_phone text := coalesce(new.phone, new.raw_user_meta_data ->> 'phone', '+91 98000 00000');
+  user_national_id text := new.raw_user_meta_data ->> 'national_id';
+  v_model text := new.raw_user_meta_data ->> 'vehicle_model';
+  v_type text := coalesce(new.raw_user_meta_data ->> 'vehicle_type', 'suv');
+  v_plate text := new.raw_user_meta_data ->> 'registration_number';
+  v_capacity integer := coalesce((new.raw_user_meta_data ->> 'seat_capacity')::integer, 6);
 begin
-  insert into public.profiles (id, full_name, phone, avatar_url, role)
+  -- Prevent public signups from self-assigning admin role
+  if user_role not in ('passenger', 'driver') then
+    user_role := 'passenger';
+  end if;
+
+  insert into public.profiles (id, full_name, phone, avatar_url, role, city, national_id, is_verified)
   values (
     new.id,
     coalesce(new.raw_user_meta_data ->> 'full_name', split_part(new.email, '@', 1)),
-    new.phone,
+    user_phone,
     new.raw_user_meta_data ->> 'avatar_url',
-    coalesce(new.raw_user_meta_data ->> 'role', 'passenger')
+    user_role,
+    user_city,
+    user_national_id,
+    -- Customers auto-verified upon OTP confirmation; Drivers require Admin verification
+    (user_role = 'passenger')
   )
-  on conflict (id) do nothing;
+  on conflict (id) do update set
+    full_name = excluded.full_name,
+    phone = excluded.phone,
+    city = excluded.city,
+    national_id = coalesce(excluded.national_id, profiles.national_id);
+
+  -- If driver registered vehicle details, create unverified vehicle record
+  if user_role = 'driver' and v_model is not null and v_plate is not null then
+    insert into public.vehicles (driver_id, make_model, vehicle_type, registration_number, seat_capacity, is_verified)
+    values (new.id, v_model, v_type::public.vehicle_type, v_plate, v_capacity, false);
+  end if;
+
   return new;
 end;
 $$;
@@ -255,43 +285,23 @@ alter table public.trips enable row level security;
 alter table public.route_stops enable row level security;
 alter table public.bookings enable row level security;
 
-create policy "Public can view verified profiles" on public.profiles for select using (is_verified = true or id = auth.uid());
+-- Profiles Policies
+create policy "Public can view verified profiles" on public.profiles for select using (is_verified = true or id = auth.uid() or (select role from public.profiles where id = auth.uid()) = 'admin');
 create policy "Users can update their profile" on public.profiles for update using (id = auth.uid()) with check (id = auth.uid());
-create policy "Anyone can view verified vehicles" on public.vehicles for select using (is_verified = true or driver_id = auth.uid());
+create policy "Admins manage profiles" on public.profiles for all using ((select role from public.profiles where id = auth.uid()) = 'admin');
+
+-- Vehicles Policies
+create policy "Anyone can view verified vehicles" on public.vehicles for select using (is_verified = true or driver_id = auth.uid() or (select role from public.profiles where id = auth.uid()) = 'admin');
 create policy "Drivers manage their vehicles" on public.vehicles for all using (driver_id = auth.uid()) with check (driver_id = auth.uid());
+
+-- Trips Policies (Only verified drivers or admins can publish)
 create policy "Anyone can view published trips" on public.trips for select using (status in ('published', 'full', 'in_progress') or driver_id = auth.uid());
-create policy "Drivers create trips" on public.trips for insert with check (driver_id = auth.uid());
+create policy "Verified drivers create trips" on public.trips for insert with check (driver_id = auth.uid() and exists (select 1 from public.profiles p where p.id = auth.uid() and p.role in ('driver', 'admin') and p.is_verified = true));
 create policy "Drivers update their trips" on public.trips for update using (driver_id = auth.uid()) with check (driver_id = auth.uid());
 create policy "Anyone can view route stops" on public.route_stops for select using (true);
 create policy "Drivers manage route stops" on public.route_stops for all using (exists (select 1 from public.trips t where t.id = trip_id and t.driver_id = auth.uid())) with check (exists (select 1 from public.trips t where t.id = trip_id and t.driver_id = auth.uid()));
+
+-- Bookings Policies
 create policy "Passengers view their bookings" on public.bookings for select using (passenger_id = auth.uid() or exists (select 1 from public.trips t where t.id = trip_id and t.driver_id = auth.uid()));
 create policy "Passengers create bookings" on public.bookings for insert with check (passenger_id = auth.uid());
 create policy "Passengers cancel their bookings" on public.bookings for update using (passenger_id = auth.uid()) with check (passenger_id = auth.uid());
-
--- Initial Seed Records
-insert into public.profiles (id, full_name, phone, role, city, rating, total_trips, is_verified) values
-('00000000-0000-0000-0000-000000000001', 'Arjun Mehta', '+91 98765 43210', 'driver', 'Jabalpur', 4.9, 128, true),
-('00000000-0000-0000-0000-000000000002', 'Nikhil Sharma', '+91 98111 22334', 'driver', 'Jabalpur', 4.8, 86, true),
-('00000000-0000-0000-0000-000000000003', 'Priya Kapoor', '+91 98222 11334', 'passenger', 'Jaipur', 5.0, 4, true),
-('00000000-0000-0000-0000-000000000099', 'Admin Control', '+91 99999 00000', 'admin', 'New Delhi', 5.0, 0, true)
-on conflict (id) do nothing;
-
-insert into public.vehicles (id, driver_id, make_model, vehicle_type, registration_number, seat_capacity, is_verified) values
-('10000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000000001', 'Maruti Suzuki Ertiga', 'suv', 'MP 20 CA 4821', 6, true),
-('10000000-0000-0000-0000-000000000002', '00000000-0000-0000-0000-000000000002', 'Toyota Innova Crysta', 'suv', 'MP 20 CB 9173', 6, true)
-on conflict (id) do nothing;
-
-insert into public.trips (id, driver_id, vehicle_id, kind, origin_city, destination_city, origin_lat, origin_lng, destination_lat, destination_lng, departure_at, return_at, total_seats, available_seats, price_per_seat, estimated_duration_minutes, notes) values
-('20000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000000001', '10000000-0000-0000-0000-000000000001', 'return', 'Jabalpur', 'Jaipur', 23.1815, 79.9864, 26.9124, 75.7873, now() + interval '1 day 7 hours', now() + interval '4 days', 4, 3, 1249, 630, 'Returning from Jaipur. Clean AC vehicle.'),
-('20000000-0000-0000-0000-000000000002', '00000000-0000-0000-0000-000000000002', '10000000-0000-0000-0000-000000000002', 'existing', 'Jabalpur', 'Jaipur', 23.1815, 79.9864, 26.9124, 75.7873, now() + interval '1 day 21 hours 30 mins', null, 4, 2, 1680, 585, 'Direct overnight trip via expressway.')
-on conflict (id) do nothing;
-
-insert into public.route_stops (trip_id, stop_order, city, latitude, longitude, arrival_offset_minutes) values
-('20000000-0000-0000-0000-000000000001', 0, 'Jabalpur', 23.1815, 79.9864, 0),
-('20000000-0000-0000-0000-000000000001', 1, 'Katni', 23.8344, 80.3950, 90),
-('20000000-0000-0000-0000-000000000001', 2, 'Kota', 25.2138, 75.8648, 450),
-('20000000-0000-0000-0000-000000000001', 3, 'Jaipur', 26.9124, 75.7873, 630),
-('20000000-0000-0000-0000-000000000002', 0, 'Jabalpur', 23.1815, 79.9864, 0),
-('20000000-0000-0000-0000-000000000002', 1, 'Sagar', 23.8388, 78.7378, 150),
-('20000000-0000-0000-0000-000000000002', 2, 'Jaipur', 26.9124, 75.7873, 585)
-on conflict (trip_id, stop_order) do nothing;

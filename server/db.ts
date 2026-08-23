@@ -21,7 +21,7 @@ export interface UserRecord extends UserProfile {
   password_hash: string;
 }
 
-// In-memory Database Store
+// Self-contained Database Store
 class DatabaseStore {
   public users: UserRecord[] = [];
   public vehicles: Vehicle[] = [];
@@ -42,7 +42,6 @@ class DatabaseStore {
   }
 
   public generateToken(userId: string): string {
-    // Simple secure bearer token implementation: base64(userId:timestamp:signature)
     const payload = `${userId}:${Date.now()}`;
     const sig = crypto.createHmac("sha256", "wayfare-secret-key-2025").update(payload).digest("hex").slice(0, 16);
     return Buffer.from(`${payload}:${sig}`).toString("base64");
@@ -69,7 +68,7 @@ class DatabaseStore {
       return d.toISOString();
     };
 
-    // 1. Preload Users
+    // Preloaded users
     const passengerId = "00000000-0000-0000-0000-000000000003";
     const driver1Id = "00000000-0000-0000-0000-000000000001";
     const driver2Id = "00000000-0000-0000-0000-000000000002";
@@ -99,6 +98,7 @@ class DatabaseStore {
         avatar_url: "https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=150&q=80",
         role: "driver",
         city: "Jabalpur",
+        national_id: "DL-142011004821",
         rating: 4.9,
         total_trips: 128,
         is_verified: true,
@@ -113,6 +113,7 @@ class DatabaseStore {
         avatar_url: "https://images.unsplash.com/photo-1531123897727-8f129e1688ce?w=150&q=80",
         role: "driver",
         city: "Jabalpur",
+        national_id: "DL-142011009173",
         rating: 4.8,
         total_trips: 86,
         is_verified: true,
@@ -134,7 +135,7 @@ class DatabaseStore {
       },
     ];
 
-    // 2. Preload Vehicles
+    // Preloaded vehicles
     const vehicle1Id = "10000000-0000-0000-0000-000000000001";
     const vehicle2Id = "10000000-0000-0000-0000-000000000002";
 
@@ -161,12 +162,10 @@ class DatabaseStore {
       },
     ];
 
-    // 3. Preload Trips
+    // Preloaded trips
     const trip1Id = "20000000-0000-0000-0000-000000000001";
     const trip2Id = "20000000-0000-0000-0000-000000000002";
     const trip3Id = "20000000-0000-0000-0000-000000000003";
-    const trip4Id = "20000000-0000-0000-0000-000000000004";
-    const trip5Id = "20000000-0000-0000-0000-000000000005";
 
     this.trips = [
       {
@@ -218,41 +217,8 @@ class DatabaseStore {
         notes: "Via Mumbai-Pune Expressway. Pickup available near Dadar and Chembur.",
         created_at: new Date().toISOString(),
       },
-      {
-        id: trip4Id,
-        driver_id: driver2Id,
-        vehicle_id: vehicle2Id,
-        kind: "return",
-        status: "published",
-        origin_city: "Delhi",
-        destination_city: "Jaipur",
-        departure_at: futureDate(2, 6, 30),
-        total_seats: 4,
-        available_seats: 3,
-        price_per_seat: 750,
-        estimated_duration_minutes: 270,
-        notes: "Morning ride via Delhi-Mumbai Expressway. Fast and smooth journey.",
-        created_at: new Date().toISOString(),
-      },
-      {
-        id: trip5Id,
-        driver_id: driver1Id,
-        vehicle_id: vehicle1Id,
-        kind: "existing",
-        status: "published",
-        origin_city: "Bengaluru",
-        destination_city: "Mysuru",
-        departure_at: futureDate(3, 8, 0),
-        total_seats: 4,
-        available_seats: 4,
-        price_per_seat: 350,
-        estimated_duration_minutes: 150,
-        notes: "Weekend expressway drive. Non-smoking vehicle.",
-        created_at: new Date().toISOString(),
-      },
     ];
 
-    // 4. Preload Route Stops
     this.routeStops = [
       { id: this.generateId(), trip_id: trip1Id, stop_order: 0, city: "Jabalpur", arrival_offset_minutes: 0 },
       { id: this.generateId(), trip_id: trip1Id, stop_order: 1, city: "Katni", arrival_offset_minutes: 90 },
@@ -263,7 +229,6 @@ class DatabaseStore {
       { id: this.generateId(), trip_id: trip2Id, stop_order: 2, city: "Jaipur", arrival_offset_minutes: 585 },
     ];
 
-    // 5. Preload Sample Confirmed Booking for passenger Priya
     this.bookings = [
       {
         id: "30000000-0000-0000-0000-000000000001",
@@ -284,7 +249,6 @@ class DatabaseStore {
     ];
   }
 
-  // --- Helpers to enrich objects ---
   public enrichTrip(trip: Trip): TripSearchResult {
     const driver = this.users.find((u) => u.id === trip.driver_id);
     const vehicle = this.vehicles.find((v) => v.id === trip.vehicle_id);
@@ -335,7 +299,6 @@ class DatabaseStore {
     };
   }
 
-  // --- Auth APIs ---
   public findUserByEmail(email: string): UserRecord | undefined {
     return this.users.find((u) => u.email.toLowerCase() === email.toLowerCase());
   }
@@ -348,47 +311,64 @@ class DatabaseStore {
     email: string;
     password: string;
     full_name: string;
-    role: UserRole;
-    phone?: string;
-    city?: string;
+    role: "passenger" | "driver";
+    phone: string;
+    city: string;
+    national_id?: string;
     vehicle_model?: string;
     vehicle_type?: VehicleType;
     registration_number?: string;
   }): { user: UserProfile; token: string } {
+    if (data.role as string === "admin") {
+      throw new Error("Admin registration is not permitted.");
+    }
+
     const existing = this.findUserByEmail(data.email);
     if (existing) {
       throw new Error("An account with this email address already exists.");
     }
 
+    // Driver requirements
+    if (data.role === "driver") {
+      if (!data.national_id || data.national_id.trim().length < 4) {
+        throw new Error("A valid National ID or Driving Licence number is required for Driver registration.");
+      }
+      if (!data.vehicle_model || !data.registration_number) {
+        throw new Error("Vehicle Make, Model, and Registration Plate are required for Driver registration.");
+      }
+    }
+
     const userId = this.generateId();
+    const isDriver = data.role === "driver";
+
     const newUser: UserRecord = {
       id: userId,
       email: data.email.toLowerCase(),
       password_hash: this.hashPassword(data.password),
       full_name: data.full_name,
-      phone: data.phone || "+91 98000 00000",
+      phone: data.phone,
       avatar_url: `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(data.full_name)}`,
       role: data.role,
-      city: data.city || "Jabalpur",
+      city: data.city,
+      national_id: data.national_id,
       rating: 5.0,
       total_trips: 0,
-      is_verified: data.role === "passenger", // auto-verify passengers
+      is_verified: !isDriver, // Customers auto-verified; Drivers start unverified pending admin check
       created_at: new Date().toISOString(),
     };
 
     this.users.push(newUser);
 
-    // If driver, create vehicle
-    if (data.role === "driver" && data.vehicle_model) {
+    if (isDriver && data.vehicle_model) {
       const vehicleId = this.generateId();
       this.vehicles.push({
         id: vehicleId,
         driver_id: userId,
         make_model: data.vehicle_model,
         vehicle_type: data.vehicle_type || "suv",
-        registration_number: data.registration_number || "Applied",
+        registration_number: data.registration_number!,
         seat_capacity: 6,
-        is_verified: true,
+        is_verified: false,
         created_at: new Date().toISOString(),
       });
     }
@@ -407,6 +387,7 @@ class DatabaseStore {
     if (user.password_hash !== hash) {
       throw new Error("Incorrect password.");
     }
+
     const token = this.generateToken(user.id);
     const { password_hash, ...profile } = user;
     return { user: profile, token };
@@ -414,7 +395,7 @@ class DatabaseStore {
 
   public updateUserProfile(
     userId: string,
-    updates: Partial<Pick<UserProfile, "full_name" | "phone" | "city" | "avatar_url">>
+    updates: Partial<Pick<UserProfile, "full_name" | "phone" | "city" | "avatar_url" | "national_id">>
   ): UserProfile {
     const user = this.findUserById(userId);
     if (!user) throw new Error("User not found");
@@ -422,35 +403,25 @@ class DatabaseStore {
     if (updates.phone) user.phone = updates.phone;
     if (updates.city) user.city = updates.city;
     if (updates.avatar_url) user.avatar_url = updates.avatar_url;
+    if (updates.national_id) user.national_id = updates.national_id;
     const { password_hash, ...profile } = user;
     return profile;
   }
 
-  public switchUserRole(userId: string, targetRole: UserRole): UserProfile {
+  public switchUserRole(userId: string, targetRole: UserRole, adminUser?: UserRecord): UserProfile {
     const user = this.findUserById(userId);
     if (!user) throw new Error("User not found");
-    user.role = targetRole;
-    if (targetRole === "driver") {
-      // Ensure has at least 1 vehicle
-      const existingVehicle = this.vehicles.find((v) => v.driver_id === userId);
-      if (!existingVehicle) {
-        this.vehicles.push({
-          id: this.generateId(),
-          driver_id: userId,
-          make_model: "Registered Sedan",
-          vehicle_type: "sedan",
-          registration_number: "IN-2025-TEMP",
-          seat_capacity: 4,
-          is_verified: true,
-          created_at: new Date().toISOString(),
-        });
-      }
+
+    // Only Admin can grant admin role
+    if (targetRole === "admin" && adminUser?.role !== "admin") {
+      throw new Error("Only an administrator can assign the admin role.");
     }
+
+    user.role = targetRole;
     const { password_hash, ...profile } = user;
     return profile;
   }
 
-  // --- Trips APIs ---
   public searchTrips(query: {
     origin?: string;
     destination?: string;
@@ -460,7 +431,7 @@ class DatabaseStore {
     kind?: string;
   }): TripSearchResult[] {
     const minSeats = query.seats ?? 1;
-    let results = this.trips.filter((t) => t.status === "published" && t.available_seats >= minSeats);
+    let results = this.trips.filter((t) => (t.status === "published" || t.status === "full") && t.available_seats >= minSeats);
 
     if (query.origin && query.origin.trim() !== "") {
       const orig = query.origin.toLowerCase().trim();
@@ -486,7 +457,6 @@ class DatabaseStore {
       if (matchingDate.length > 0) {
         results = matchingDate;
       }
-      // If none on exact date, we still show all matching city routes for maximum helpfulness
     }
 
     if (query.maxPrice) {
@@ -497,7 +467,6 @@ class DatabaseStore {
       results = results.filter((t) => t.kind === query.kind);
     }
 
-    // Map and enrich
     return results.map((t) => this.enrichTrip(t));
   }
 
@@ -525,6 +494,15 @@ class DatabaseStore {
     notes?: string;
     stops?: string[];
   }): TripSearchResult {
+    const driver = this.findUserById(data.driver_id);
+    if (!driver) throw new Error("Driver account not found");
+    if (driver.role !== "driver" && driver.role !== "admin") {
+      throw new Error("Only registered driver accounts can publish trips.");
+    }
+    if (!driver.is_verified && driver.role !== "admin") {
+      throw new Error("Driver verification pending. Your National ID and vehicle documents are under review by our admin team.");
+    }
+
     let vehicleId = data.vehicle_id;
     if (!vehicleId) {
       const existing = this.vehicles.find((v) => v.driver_id === data.driver_id);
@@ -535,7 +513,7 @@ class DatabaseStore {
         this.vehicles.push({
           id: newVehicleId,
           driver_id: data.driver_id,
-          make_model: data.vehicle_name || "Maruti Suzuki Ertiga",
+          make_model: data.vehicle_name || "Registered Vehicle",
           vehicle_type: "suv",
           registration_number: "MP 20 " + Math.floor(1000 + Math.random() * 9000),
           seat_capacity: data.seats + 2,
@@ -567,7 +545,6 @@ class DatabaseStore {
 
     this.trips.unshift(newTrip);
 
-    // Route stops
     this.routeStops.push({
       id: this.generateId(),
       trip_id: tripId,
@@ -627,7 +604,6 @@ class DatabaseStore {
     return true;
   }
 
-  // --- Bookings APIs ---
   public createBooking(data: {
     trip_id: string;
     passenger_id: string;
@@ -645,7 +621,6 @@ class DatabaseStore {
       throw new Error(`Only ${trip.available_seats} seat(s) remaining for this trip.`);
     }
 
-    // Atomic seat adjustment
     trip.available_seats -= data.seats;
     if (trip.available_seats === 0) {
       trip.status = "full";
@@ -674,7 +649,6 @@ class DatabaseStore {
 
     this.bookings.unshift(newBooking);
 
-    // Increment user trip count
     const passenger = this.findUserById(data.passenger_id);
     if (passenger) passenger.total_trips += 1;
 
@@ -693,13 +667,6 @@ class DatabaseStore {
       .map((b) => this.enrichBooking(b));
   }
 
-  public getBookingsByDriverId(driverId: string): Booking[] {
-    const driverTripIds = this.trips.filter((t) => t.driver_id === driverId).map((t) => t.id);
-    return this.bookings
-      .filter((b) => driverTripIds.includes(b.trip_id))
-      .map((b) => this.enrichBooking(b));
-  }
-
   public cancelBooking(bookingId: string, userId: string): Booking {
     const booking = this.bookings.find((b) => b.id === bookingId);
     if (!booking) throw new Error("Booking not found");
@@ -715,7 +682,6 @@ class DatabaseStore {
     booking.status = "cancelled";
     booking.payment_status = "refunded";
 
-    // Restore available seats on trip
     const trip = this.trips.find((t) => t.id === booking.trip_id);
     if (trip) {
       trip.available_seats += booking.seats;
@@ -742,7 +708,6 @@ class DatabaseStore {
     return this.enrichBooking(booking);
   }
 
-  // --- Driver & Vehicles APIs ---
   public getDriverStats(driverId: string): DriverStatsResponse {
     const driver = this.findUserById(driverId);
     const driverTrips = this.trips.filter((t) => t.driver_id === driverId);
@@ -762,7 +727,7 @@ class DatabaseStore {
       active_trips: activeTrips,
       total_passengers: totalPassengers,
       driver_rating: driver?.rating ?? 4.9,
-      is_verified: driver?.is_verified ?? true,
+      is_verified: driver?.is_verified ?? false,
     };
   }
 
@@ -784,7 +749,7 @@ class DatabaseStore {
       vehicle_type: data.vehicle_type,
       registration_number: data.registration_number,
       seat_capacity: data.seat_capacity,
-      is_verified: true,
+      is_verified: false,
       created_at: new Date().toISOString(),
     };
     this.vehicles.push(newVehicle);
@@ -795,7 +760,6 @@ class DatabaseStore {
     return this.trips.filter((t) => t.driver_id === driverId).map((t) => this.enrichTrip(t));
   }
 
-  // --- Admin APIs ---
   public getAdminStats(): AdminStatsResponse {
     const totalGmv = this.bookings
       .filter((b) => b.status !== "cancelled")
@@ -805,7 +769,7 @@ class DatabaseStore {
     const totalDrivers = this.users.filter((u) => u.role === "driver").length;
     const totalTrips = this.trips.length;
     const activeTrips = this.trips.filter((t) => t.status === "published" || t.status === "full" || t.status === "in_progress").length;
-    const pendingVerifications = this.users.filter((u) => !u.is_verified).length + this.vehicles.filter((v) => !v.is_verified).length;
+    const pendingVerifications = this.users.filter((u) => u.role === "driver" && !u.is_verified).length + this.vehicles.filter((v) => !v.is_verified).length;
 
     return {
       total_gmv: totalGmv,
@@ -826,6 +790,11 @@ class DatabaseStore {
     const user = this.findUserById(userId);
     if (!user) throw new Error("User not found");
     user.is_verified = !user.is_verified;
+    // If driver is verified, also verify their primary vehicle
+    if (user.role === "driver" && user.is_verified) {
+      const v = this.vehicles.find((veh) => veh.driver_id === userId);
+      if (v) v.is_verified = true;
+    }
     const { password_hash, ...profile } = user;
     return profile;
   }

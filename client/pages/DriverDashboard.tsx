@@ -10,6 +10,7 @@ import {
   CalendarDays,
   Sparkles,
   ShieldCheck,
+  ShieldAlert,
   TrendingUp,
   ChevronDown,
   ChevronUp,
@@ -18,6 +19,8 @@ import {
   Check,
   Trash2,
   Briefcase,
+  FileCheck2,
+  AlertTriangle,
 } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
 import { Navbar } from "@/components/Navbar";
@@ -27,7 +30,7 @@ import type { Booking, DriverStatsResponse, TripSearchResult, Vehicle } from "@s
 import { toast } from "sonner";
 
 export default function DriverDashboard() {
-  const { user, token, switchRole } = useAuth();
+  const { user, token } = useAuth();
   const navigate = useNavigate();
 
   const [stats, setStats] = useState<DriverStatsResponse | null>(null);
@@ -77,10 +80,6 @@ export default function DriverDashboard() {
       navigate("/");
       return;
     }
-    // If not driver, prompt to switch
-    if (user.role === "passenger") {
-      switchRole("driver");
-    }
     fetchDriverData();
   }, [user, token]);
 
@@ -129,7 +128,7 @@ export default function DriverDashboard() {
   };
 
   const handleDeleteTrip = async (tripId: string) => {
-    if (!confirm("Are you sure you want to delete/cancel this trip?")) return;
+    if (!confirm("Are you sure you want to cancel and delete this trip?")) return;
     if (!token) return;
     try {
       const res = await fetch(`/api/trips/${tripId}`, {
@@ -163,7 +162,7 @@ export default function DriverDashboard() {
         }),
       });
       if (res.ok) {
-        toast.success("Vehicle registered successfully!");
+        toast.success("Vehicle submitted! It will be verified by the admin team.");
         setShowAddVehicle(false);
         setVehicleModel("");
         setRegNumber("");
@@ -175,6 +174,8 @@ export default function DriverDashboard() {
       toast.error("Network error registering vehicle");
     }
   };
+
+  const isVerified = user?.is_verified ?? false;
 
   return (
     <div className="min-h-screen flex flex-col bg-wayfare-sand/40 text-wayfare-ink">
@@ -188,11 +189,38 @@ export default function DriverDashboard() {
       />
 
       <main className="flex-1 mx-auto w-full max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
+        {/* Verification Status Banner if Unverified */}
+        {!isVerified && (
+          <div className="mb-6 rounded-3xl border-2 border-amber-300 bg-amber-50/90 p-6 shadow-sm">
+            <div className="flex items-start gap-4">
+              <div className="grid h-12 w-12 place-items-center rounded-2xl bg-amber-200 text-amber-900 shrink-0">
+                <ShieldAlert size={24} />
+              </div>
+              <div className="flex-1">
+                <h3 className="font-display text-lg font-extrabold text-amber-950">
+                  Driver Account Verification Pending
+                </h3>
+                <p className="mt-1 text-xs sm:text-sm text-amber-800 leading-relaxed">
+                  Your submitted <strong>National ID ({user?.national_id || "Document under review"})</strong> and vehicle registration details are currently being inspected by our safety and compliance team.
+                  Once verified by an administrator, you will receive full authorization to publish rides and carry passengers.
+                </p>
+                <div className="mt-3 inline-flex items-center gap-2 rounded-xl bg-amber-100 px-3 py-1.5 text-xs font-bold text-amber-900">
+                  <Clock size={14} /> Review in progress • Publishing is temporarily locked
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Driver Header Banner */}
         <div className="rounded-3xl border border-wayfare-ink/10 bg-white p-6 sm:p-8 shadow-sm">
           <div className="flex flex-col gap-6 sm:flex-row sm:items-center sm:justify-between">
             <div className="flex items-center gap-4">
-              <div className="grid h-16 w-16 place-items-center rounded-2xl bg-emerald-600 text-white shadow-md text-2xl font-black">
+              <div
+                className={`grid h-16 w-16 place-items-center rounded-2xl text-white shadow-md text-2xl font-black ${
+                  isVerified ? "bg-emerald-600" : "bg-amber-600"
+                }`}
+              >
                 <CarFront size={32} />
               </div>
               <div>
@@ -200,12 +228,20 @@ export default function DriverDashboard() {
                   <h1 className="font-display text-2xl sm:text-3xl font-extrabold text-wayfare-ink">
                     {user?.full_name}
                   </h1>
-                  <span className="flex items-center gap-1 rounded-full bg-emerald-50 border border-emerald-200 px-2.5 py-0.5 text-xs font-bold text-emerald-800">
-                    <ShieldCheck size={13} /> Verified Driver
-                  </span>
+                  {isVerified ? (
+                    <span className="flex items-center gap-1 rounded-full bg-emerald-50 border border-emerald-200 px-2.5 py-0.5 text-xs font-bold text-emerald-800">
+                      <ShieldCheck size={13} /> Verified Driver
+                    </span>
+                  ) : (
+                    <span className="flex items-center gap-1 rounded-full bg-amber-50 border border-amber-300 px-2.5 py-0.5 text-xs font-bold text-amber-800">
+                      <Clock size={13} /> Verification Pending
+                    </span>
+                  )}
                 </div>
                 <p className="mt-1 text-xs text-slate-500 flex items-center gap-2">
                   <span>{user?.email}</span>
+                  <span>•</span>
+                  <span>{user?.phone}</span>
                   <span>•</span>
                   <span>Base: {user?.city || "Jabalpur"}</span>
                 </p>
@@ -215,16 +251,22 @@ export default function DriverDashboard() {
             {/* Action Buttons */}
             <div className="flex flex-wrap items-center gap-3">
               <button
-                onClick={() => setPublishOpen(true)}
-                className="flex items-center gap-2 rounded-xl bg-wayfare-teal px-4 py-2.5 text-xs sm:text-sm font-bold text-white shadow hover:bg-wayfare-ink transition"
+                onClick={() => {
+                  if (!isVerified) {
+                    toast.error("You cannot publish rides until your National ID and vehicle documents are approved by an admin.");
+                    return;
+                  }
+                  setPublishOpen(true);
+                }}
+                disabled={!isVerified}
+                className={`flex items-center gap-2 rounded-xl px-4 py-2.5 text-xs sm:text-sm font-bold transition shadow ${
+                  isVerified
+                    ? "bg-wayfare-teal text-white hover:bg-wayfare-ink"
+                    : "bg-slate-200 text-slate-400 cursor-not-allowed"
+                }`}
+                title={!isVerified ? "Verification required to publish rides" : "Publish new ride"}
               >
                 <PlusCircle size={16} /> Publish New Ride
-              </button>
-              <button
-                onClick={() => switchRole("passenger")}
-                className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-xs sm:text-sm font-bold text-slate-700 hover:bg-slate-50 transition"
-              >
-                Switch to Passenger
               </button>
             </div>
           </div>
@@ -273,14 +315,16 @@ export default function DriverDashboard() {
               <h2 className="font-display text-xl sm:text-2xl font-extrabold text-wayfare-ink">
                 My Published Trips ({trips.length})
               </h2>
-              <p className="text-xs text-slate-500">Manage seats, passenger rosters, and trip status.</p>
+              <p className="text-xs text-slate-500">Manage seats, passenger rosters, and ride status.</p>
             </div>
-            <button
-              onClick={() => setPublishOpen(true)}
-              className="flex items-center gap-1.5 rounded-xl bg-wayfare-orange px-3.5 py-2 text-xs font-bold text-wayfare-ink shadow hover:opacity-90"
-            >
-              <PlusCircle size={14} /> Add Trip
-            </button>
+            {isVerified && (
+              <button
+                onClick={() => setPublishOpen(true)}
+                className="flex items-center gap-1.5 rounded-xl bg-wayfare-orange px-3.5 py-2 text-xs font-bold text-wayfare-ink shadow hover:opacity-90"
+              >
+                <PlusCircle size={14} /> Add Trip
+              </button>
+            )}
           </div>
 
           {loading ? (
@@ -293,14 +337,18 @@ export default function DriverDashboard() {
               <CarFront size={32} className="mx-auto text-slate-400" />
               <h3 className="mt-4 font-display text-xl font-extrabold text-wayfare-ink">No trips published yet</h3>
               <p className="mt-1 text-xs sm:text-sm text-slate-500 max-w-sm mx-auto">
-                Turn your empty seats into earnings. Publish your next scheduled journey in under 2 minutes!
+                {isVerified
+                  ? "Turn your empty seats into extra income. Publish your next scheduled journey!"
+                  : "Your account is pending verification. Once approved, you can publish intercity journeys."}
               </p>
-              <button
-                onClick={() => setPublishOpen(true)}
-                className="mt-5 inline-flex items-center gap-2 rounded-xl bg-wayfare-teal px-5 py-2.5 text-xs sm:text-sm font-bold text-white shadow"
-              >
-                <PlusCircle size={15} /> Publish My First Ride
-              </button>
+              {isVerified && (
+                <button
+                  onClick={() => setPublishOpen(true)}
+                  className="mt-5 inline-flex items-center gap-2 rounded-xl bg-wayfare-teal px-5 py-2.5 text-xs sm:text-sm font-bold text-white shadow"
+                >
+                  <PlusCircle size={15} /> Publish My First Ride
+                </button>
+              )}
             </div>
           ) : (
             <div className="space-y-4">
@@ -411,7 +459,7 @@ export default function DriverDashboard() {
                         </p>
                         {roster.length === 0 ? (
                           <p className="rounded-xl bg-wayfare-sand/50 p-4 text-xs font-semibold text-slate-500 text-center">
-                            No bookings yet for this trip. Seats remain available for instant booking.
+                            No bookings yet for this trip. Seats remain available for passenger booking.
                           </p>
                         ) : (
                           <div className="grid gap-2 sm:grid-cols-2">
@@ -431,7 +479,7 @@ export default function DriverDashboard() {
                                 <p className="text-slate-500">Pickup: {b.pickup_address}</p>
                                 <p className="text-slate-500">Dropoff: {b.dropoff_address}</p>
                                 <p className="font-bold text-emerald-700">
-                                  Fare Paid: ₹{b.total_price.toLocaleString("en-IN")} via {b.payment_method.toUpperCase()}
+                                  Fare: ₹{b.total_price.toLocaleString("en-IN")} via {b.payment_method.toUpperCase()}
                                 </p>
                               </div>
                             ))}
@@ -451,7 +499,7 @@ export default function DriverDashboard() {
           <div className="flex items-center justify-between mb-4">
             <div>
               <h2 className="font-display text-xl font-extrabold text-wayfare-ink">Registered Fleet Vehicles</h2>
-              <p className="text-xs text-slate-500">Vehicles authorized for Wayfare intercity trips.</p>
+              <p className="text-xs text-slate-500">Vehicles submitted for verification.</p>
             </div>
             <button
               onClick={() => setShowAddVehicle(!showAddVehicle)}
@@ -463,7 +511,7 @@ export default function DriverDashboard() {
 
           {showAddVehicle && (
             <form onSubmit={handleAddVehicle} className="mb-6 rounded-2xl bg-slate-50 p-4 border border-slate-200 space-y-3">
-              <p className="text-xs font-extrabold uppercase text-slate-600">Register New Vehicle</p>
+              <p className="text-xs font-extrabold uppercase text-slate-600">Submit New Vehicle</p>
               <div className="grid gap-3 sm:grid-cols-3">
                 <input
                   required
@@ -477,7 +525,7 @@ export default function DriverDashboard() {
                   value={regNumber}
                   onChange={(e) => setRegNumber(e.target.value)}
                   placeholder="Plate (e.g. MP 20 CD 4455)"
-                  className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs outline-none focus:border-wayfare-teal"
+                  className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-mono font-bold outline-none focus:border-wayfare-teal"
                 />
                 <select
                   value={vehicleType}
@@ -493,7 +541,7 @@ export default function DriverDashboard() {
                 type="submit"
                 className="rounded-xl bg-wayfare-teal px-4 py-2 text-xs font-bold text-white shadow hover:bg-wayfare-ink"
               >
-                Save Vehicle
+                Submit for Verification
               </button>
             </form>
           )}
@@ -503,11 +551,17 @@ export default function DriverDashboard() {
               <div key={v.id} className="rounded-2xl border border-slate-100 bg-wayfare-sand/40 p-4">
                 <div className="flex items-center justify-between">
                   <span className="font-bold text-wayfare-ink text-sm">{v.make_model}</span>
-                  <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-bold text-emerald-800">
-                    Verified
+                  <span
+                    className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${
+                      v.is_verified
+                        ? "bg-emerald-100 text-emerald-800"
+                        : "bg-amber-100 text-amber-800"
+                    }`}
+                  >
+                    {v.is_verified ? "Verified" : "Pending Check"}
                   </span>
                 </div>
-                <p className="mt-1 font-mono text-xs font-semibold text-slate-500">{v.registration_number}</p>
+                <p className="mt-1 font-mono text-xs font-semibold text-slate-600">{v.registration_number}</p>
                 <p className="mt-2 text-[11px] text-slate-400 uppercase font-bold">
                   {v.vehicle_type} • {v.seat_capacity} Seat Capacity
                 </p>

@@ -87,17 +87,23 @@ export const publishTrip: RequestHandler = (req, res) => {
   const user = db.verifyToken(token);
   if (!user) return res.status(401).json({ error: "Session expired. Please sign in again." });
 
+  // Strict verification gate for drivers
+  if (user.role !== "driver" && user.role !== "admin") {
+    return res.status(403).json({ error: "Only registered drivers can publish trips." });
+  }
+
+  if (!user.is_verified && user.role !== "admin") {
+    return res.status(403).json({
+      error: "Driver verification pending. Your National ID and vehicle documents are under review by our admin team. You will be authorized to publish rides once approved.",
+    });
+  }
+
   const parsed = publishSchema.safeParse(req.body);
   if (!parsed.success) {
     return res.status(400).json({ error: parsed.error.issues[0]?.message || "Invalid trip details" });
   }
 
   try {
-    // If user is passenger, switch them to driver role
-    if (user.role === "passenger") {
-      db.switchUserRole(user.id, "driver");
-    }
-
     const created = db.createTrip({
       driver_id: user.id,
       vehicle_id: parsed.data.vehicle_id,

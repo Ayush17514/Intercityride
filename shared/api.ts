@@ -8,6 +8,7 @@ export interface UserProfile {
   avatar_url?: string;
   role: UserRole;
   city?: string;
+  national_id?: string; // Valid Driving License / National ID Proof
   rating: number;
   total_trips: number;
   is_verified: boolean;
@@ -58,6 +59,7 @@ export interface Trip {
     id: string;
     full_name: string;
     phone?: string;
+    national_id?: string;
     rating: number;
     is_verified: boolean;
     avatar_url?: string;
