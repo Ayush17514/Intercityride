@@ -6,7 +6,6 @@ import {
   handleGetMe,
   handleLogin,
   handleRegister,
-  handleSwitchRole,
   handleUpdateProfile,
 } from "./routes/auth";
 import {
@@ -60,7 +59,6 @@ export function createServer() {
   app.post("/api/auth/login", handleLogin);
   app.get("/api/auth/me", handleGetMe);
   app.put("/api/auth/profile", handleUpdateProfile);
-  app.post("/api/auth/switch-role", handleSwitchRole);
 
   // --- Trips Routes ---
   app.get("/api/trips/search", searchTrips);
