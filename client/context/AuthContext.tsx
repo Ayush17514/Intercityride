@@ -313,22 +313,21 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           .eq("id", data.user!.id)
           .single();
 
-        if (profile) {
-          setUser({
-            id: profile.id,
-            email: data.user!.email || "",
-            full_name: profile.full_name,
-            phone: profile.phone,
-            avatar_url: profile.avatar_url,
-            role: profile.role as UserRole,
-            city: profile.city,
-            national_id: profile.national_id,
-            rating: profile.rating,
-            total_trips: profile.total_trips,
-            is_verified: profile.is_verified,
-            created_at: profile.created_at,
-          });
-        }
+        const metadata = data.user!.user_metadata ?? {};
+        setUser({
+          id: data.user!.id,
+          email: data.user!.email || "",
+          full_name: profile?.full_name || metadata.full_name || data.user!.email?.split("@")[0] || "Wayfare user",
+          phone: profile?.phone || metadata.phone,
+          avatar_url: profile?.avatar_url || metadata.avatar_url,
+          role: (profile?.role || metadata.role || "passenger") as UserRole,
+          city: profile?.city || metadata.city,
+          national_id: profile?.national_id || metadata.national_id,
+          rating: profile?.rating ?? 5,
+          total_trips: profile?.total_trips ?? 0,
+          is_verified: profile?.is_verified ?? false,
+          created_at: profile?.created_at || data.user!.created_at,
+        });
         toast.success("Email verified successfully! You are now logged in.");
         return true;
       }
