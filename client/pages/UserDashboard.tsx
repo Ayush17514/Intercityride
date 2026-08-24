@@ -27,7 +27,7 @@ import type { Booking } from "@shared/api";
 import { toast } from "sonner";
 
 export default function UserDashboard() {
-  const { user, token, logout, switchRole } = useAuth();
+  const { user, token, logout } = useAuth();
   const navigate = useNavigate();
 
   const [bookings, setBookings] = useState<Booking[]>([]);
@@ -133,12 +133,6 @@ export default function UserDashboard() {
               >
                 <Search size={15} /> Find New Ride
               </Link>
-              <button
-                onClick={() => switchRole("driver")}
-                className="flex items-center gap-2 rounded-xl border border-emerald-300 bg-emerald-50 px-4 py-2.5 text-xs sm:text-sm font-bold text-emerald-800 hover:bg-emerald-100 transition"
-              >
-                <CarFront size={15} /> Switch to Driver
-              </button>
             </div>
           </div>
 
