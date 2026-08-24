@@ -1,5 +1,6 @@
 import { RequestHandler } from "express";
 import { z } from "zod";
+import { createClient } from "@supabase/supabase-js";
 import { db } from "../db";
 import type { BookingResponse, MyBookingsResponse } from "@shared/api";
 
@@ -17,11 +18,35 @@ const statusSchema = z.object({
   status: z.enum(["confirmed", "in_progress", "completed", "cancelled"]),
 });
 
-export const createBooking: RequestHandler = (req, res) => {
+export const createBooking: RequestHandler = async (req, res) => {
   const token = req.headers.authorization?.replace(/^Bearer\s+/i, "");
   if (!token) return res.status(401).json({ error: "Please log in before booking a ride." });
 
-  const user = db.verifyToken(token);
+  let user = db.verifyToken(token);
+  if (!user && process.env.SUPABASE_URL && process.env.VITE_SUPABASE_ANON_KEY) {
+    const supabase = createClient(process.env.SUPABASE_URL, process.env.VITE_SUPABASE_ANON_KEY, { auth: { autoRefreshToken: false, persistSession: false } });
+    const { data } = await supabase.auth.getUser(token);
+    if (data.user) {
+      user = db.findUserById(data.user.id) || db.users.find((candidate) => candidate.email === data.user.email) || null;
+      if (!user) {
+        user = {
+          id: data.user.id,
+          email: data.user.email || "",
+          password_hash: "",
+          full_name: data.user.user_metadata?.full_name || data.user.email?.split("@")[0] || "Wayfare user",
+          phone: data.user.user_metadata?.phone,
+          avatar_url: data.user.user_metadata?.avatar_url,
+          role: "passenger",
+          city: data.user.user_metadata?.city,
+          rating: 5,
+          total_trips: 0,
+          is_verified: true,
+          created_at: data.user.created_at,
+        };
+        db.users.push(user);
+      }
+    }
+  }
   if (!user) return res.status(401).json({ error: "Your session has expired. Please sign in again." });
 
   const parsed = createBookingSchema.safeParse(req.body);

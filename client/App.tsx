@@ -11,6 +11,7 @@ import UserDashboard from "./pages/UserDashboard";
 import DriverDashboard from "./pages/DriverDashboard";
 import AdminDashboard from "./pages/AdminDashboard";
 import NotFound from "./pages/NotFound";
+import ComingSoon from "./pages/ComingSoon";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -49,6 +50,7 @@ const App = () => (
             <Route path="/dashboard/passenger" element={<UserDashboard />} />
             <Route path="/dashboard/driver" element={<DriverDashboard />} />
             <Route path="/dashboard/admin" element={<AdminDashboard />} />
+            <Route path="/coming-soon" element={<ComingSoon />} />
 
             {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
             <Route path="*" element={<NotFound />} />
