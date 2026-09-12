@@ -11,12 +11,7 @@ const createVehicleSchema = z.object({
 });
 
 export const getDriverStats: RequestHandler = (req, res) => {
-  const token = req.headers.authorization?.replace(/^Bearer\s+/i, "");
-  if (!token) return res.status(401).json({ error: "Authentication required" });
-
-  const user = db.verifyToken(token);
-  if (!user) return res.status(401).json({ error: "Invalid session" });
-
+  const user = res.locals.user;
   try {
     const stats = db.getDriverStats(user.id);
     return res.json(stats satisfies DriverStatsResponse);
@@ -26,12 +21,7 @@ export const getDriverStats: RequestHandler = (req, res) => {
 };
 
 export const getDriverTrips: RequestHandler = (req, res) => {
-  const token = req.headers.authorization?.replace(/^Bearer\s+/i, "");
-  if (!token) return res.status(401).json({ error: "Authentication required" });
-
-  const user = db.verifyToken(token);
-  if (!user) return res.status(401).json({ error: "Invalid session" });
-
+  const user = res.locals.user;
   try {
     const trips = db.getTripsByDriverId(user.id);
     return res.json({ trips });
@@ -41,12 +31,7 @@ export const getDriverTrips: RequestHandler = (req, res) => {
 };
 
 export const getDriverVehicles: RequestHandler = (req, res) => {
-  const token = req.headers.authorization?.replace(/^Bearer\s+/i, "");
-  if (!token) return res.status(401).json({ error: "Authentication required" });
-
-  const user = db.verifyToken(token);
-  if (!user) return res.status(401).json({ error: "Invalid session" });
-
+  const user = res.locals.user;
   try {
     const vehicles = db.getVehiclesByDriverId(user.id);
     return res.json({ vehicles });
@@ -56,12 +41,7 @@ export const getDriverVehicles: RequestHandler = (req, res) => {
 };
 
 export const createDriverVehicle: RequestHandler = (req, res) => {
-  const token = req.headers.authorization?.replace(/^Bearer\s+/i, "");
-  if (!token) return res.status(401).json({ error: "Authentication required" });
-
-  const user = db.verifyToken(token);
-  if (!user) return res.status(401).json({ error: "Invalid session" });
-
+  const user = res.locals.user;
   const parsed = createVehicleSchema.safeParse(req.body);
   if (!parsed.success) {
     return res.status(400).json({ error: parsed.error.issues[0]?.message || "Invalid vehicle details" });

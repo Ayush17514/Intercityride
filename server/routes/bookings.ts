@@ -73,12 +73,7 @@ export const createBooking: RequestHandler = async (req, res) => {
 };
 
 export const getMyBookings: RequestHandler = (req, res) => {
-  const token = req.headers.authorization?.replace(/^Bearer\s+/i, "");
-  if (!token) return res.status(401).json({ error: "Authentication required" });
-
-  const user = db.verifyToken(token);
-  if (!user) return res.status(401).json({ error: "Invalid session" });
-
+  const user = res.locals.user;
   try {
     const bookings = db.getBookingsByPassengerId(user.id);
     return res.json({ bookings } satisfies MyBookingsResponse);
@@ -88,13 +83,8 @@ export const getMyBookings: RequestHandler = (req, res) => {
 };
 
 export const getTripBookings: RequestHandler = (req, res) => {
-  const token = req.headers.authorization?.replace(/^Bearer\s+/i, "");
-  if (!token) return res.status(401).json({ error: "Authentication required" });
-
-  const user = db.verifyToken(token);
-  if (!user) return res.status(401).json({ error: "Invalid session" });
-
-  const tripId = req.params.tripId;
+  const user = res.locals.user;
+  const tripId = req.params.tripId as string;
   try {
     const bookings = db.getBookingsByTripId(tripId);
     return res.json({ bookings } satisfies MyBookingsResponse);
@@ -104,13 +94,8 @@ export const getTripBookings: RequestHandler = (req, res) => {
 };
 
 export const cancelBooking: RequestHandler = (req, res) => {
-  const token = req.headers.authorization?.replace(/^Bearer\s+/i, "");
-  if (!token) return res.status(401).json({ error: "Authentication required" });
-
-  const user = db.verifyToken(token);
-  if (!user) return res.status(401).json({ error: "Invalid session" });
-
-  const bookingId = req.params.id;
+  const user = res.locals.user;
+  const bookingId = req.params.id as string;
   try {
     const cancelled = db.cancelBooking(bookingId, user.id);
     return res.json({ booking: cancelled });
@@ -120,13 +105,8 @@ export const cancelBooking: RequestHandler = (req, res) => {
 };
 
 export const updateBookingStatus: RequestHandler = (req, res) => {
-  const token = req.headers.authorization?.replace(/^Bearer\s+/i, "");
-  if (!token) return res.status(401).json({ error: "Authentication required" });
-
-  const user = db.verifyToken(token);
-  if (!user) return res.status(401).json({ error: "Invalid session" });
-
-  const bookingId = req.params.id;
+  const user = res.locals.user;
+  const bookingId = req.params.id as string;
   const parsed = statusSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: "Invalid status" });
 

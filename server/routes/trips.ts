@@ -71,7 +71,7 @@ export const listTripsFromOrigin: RequestHandler = (req, res) => {
 };
 
 export const getTripDetails: RequestHandler = (req, res) => {
-  const tripId = req.params.id;
+  const tripId = req.params.id as string;
   if (!tripId) return res.status(400).json({ error: "Trip ID required" });
 
   const trip = db.getTripById(tripId);
@@ -81,13 +81,8 @@ export const getTripDetails: RequestHandler = (req, res) => {
 };
 
 export const publishTrip: RequestHandler = (req, res) => {
-  const token = req.headers.authorization?.replace(/^Bearer\s+/i, "");
-  if (!token) return res.status(401).json({ error: "Sign in before publishing a trip." });
-
-  const user = db.verifyToken(token);
-  if (!user) return res.status(401).json({ error: "Session expired. Please sign in again." });
-
-  // Strict verification gate for drivers
+  const user = res.locals.user;
+  
   if (user.role !== "driver" && user.role !== "admin") {
     return res.status(403).json({ error: "Only registered drivers can publish trips." });
   }
@@ -126,12 +121,8 @@ export const publishTrip: RequestHandler = (req, res) => {
 };
 
 export const updateTripStatus: RequestHandler = (req, res) => {
-  const token = req.headers.authorization?.replace(/^Bearer\s+/i, "");
-  if (!token) return res.status(401).json({ error: "Authentication required" });
-  const user = db.verifyToken(token);
-  if (!user) return res.status(401).json({ error: "Invalid session" });
-
-  const tripId = req.params.id;
+  const user = res.locals.user;
+  const tripId = req.params.id as string;
   const parsed = statusSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: "Invalid status" });
 
@@ -144,12 +135,8 @@ export const updateTripStatus: RequestHandler = (req, res) => {
 };
 
 export const deleteTrip: RequestHandler = (req, res) => {
-  const token = req.headers.authorization?.replace(/^Bearer\s+/i, "");
-  if (!token) return res.status(401).json({ error: "Authentication required" });
-  const user = db.verifyToken(token);
-  if (!user) return res.status(401).json({ error: "Invalid session" });
-
-  const tripId = req.params.id;
+  const user = res.locals.user;
+  const tripId = req.params.id as string;
   try {
     db.deleteTrip(tripId, user.id);
     return res.json({ success: true, message: "Trip deleted successfully" });

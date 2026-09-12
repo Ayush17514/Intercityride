@@ -77,26 +77,13 @@ export const handleLogin: RequestHandler = (req, res) => {
 };
 
 export const handleGetMe: RequestHandler = (req, res) => {
-  const token = req.headers.authorization?.replace(/^Bearer\s+/i, "");
-  if (!token) {
-    return res.status(401).json({ error: "Authentication required" });
-  }
-
-  const user = db.verifyToken(token);
-  if (!user) {
-    return res.status(401).json({ error: "Invalid or expired session" });
-  }
-
+  const user = res.locals.user;
   const { password_hash, ...profile } = user;
   return res.json({ user: profile satisfies UserProfile });
 };
 
 export const handleUpdateProfile: RequestHandler = (req, res) => {
-  const token = req.headers.authorization?.replace(/^Bearer\s+/i, "");
-  if (!token) return res.status(401).json({ error: "Authentication required" });
-  const user = db.verifyToken(token);
-  if (!user) return res.status(401).json({ error: "Invalid session" });
-
+  const user = res.locals.user;
   const parsed = profileUpdateSchema.safeParse(req.body);
   if (!parsed.success) {
     return res.status(400).json({ error: "Invalid profile data" });
